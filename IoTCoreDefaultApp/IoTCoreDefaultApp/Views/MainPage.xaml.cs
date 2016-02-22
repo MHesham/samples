@@ -1,27 +1,6 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-    The MIT License(MIT)
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
-
+using IoTCoreDefaultApp.Utils;
 using System;
 using System.Globalization;
 using Windows.Networking.Connectivity;
@@ -30,7 +9,6 @@ using Windows.System;
 using Windows.UI.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Media.Imaging;
 using Windows.UI.Xaml.Navigation;
 
@@ -38,27 +16,57 @@ namespace IoTCoreDefaultApp
 {
     public sealed partial class MainPage : Page
     {
+        public static MainPage Current;
         private CoreDispatcher MainPageDispatcher;
         private DispatcherTimer timer;
         private ConnectedDevicePresenter connectedDevicePresenter;
+
+        public CoreDispatcher UIThreadDispatcher
+        {
+            get
+            {
+                return MainPageDispatcher;
+            }
+
+            set
+            {
+                MainPageDispatcher = value;
+            }
+        }
 
         public MainPage()
         {
             this.InitializeComponent();
 
-            MainPageDispatcher = Window.Current.Dispatcher;
+            // This is a static public property that allows downstream pages to get a handle to the MainPage instance
+            // in order to call methods that are in this class.
+            Current = this;
 
-            UpdateBoardInfo();
-            UpdateNetworkInfo();
-            UpdateDateTime();
-            UpdateConnectedDevices();
+            MainPageDispatcher = Window.Current.Dispatcher;
 
             NetworkInformation.NetworkStatusChanged += NetworkInformation_NetworkStatusChanged;
 
-            timer = new DispatcherTimer();
-            timer.Tick += timer_Tick;
-            timer.Interval = TimeSpan.FromSeconds(30);
-            timer.Start();
+            this.NavigationCacheMode = NavigationCacheMode.Enabled;
+
+            this.DataContext = LanguageManager.GetInstance();
+
+            this.Loaded += (sender, e) => 
+            {
+                UpdateBoardInfo();
+                UpdateNetworkInfo();
+                UpdateDateTime();
+                UpdateConnectedDevices();
+
+                timer = new DispatcherTimer();
+                timer.Tick += timer_Tick;
+                timer.Interval = TimeSpan.FromSeconds(10);
+                timer.Start();
+            };
+            this.Unloaded += (sender, e) =>
+            {
+                timer.Stop();
+                timer = null;
+            };
         }
 
         protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -107,15 +115,19 @@ namespace IoTCoreDefaultApp
 
         private void UpdateDateTime()
         {
-            var t = DateTime.Now;
-            this.CurrentTime.Text = t.ToString("t", CultureInfo.CurrentCulture);
+            // Using DateTime.Now is simpler, but the time zone is cached. So, we use a native method insead.
+            SYSTEMTIME localTime;
+            NativeTimeMethods.GetLocalTime(out localTime);
+
+            DateTime t = localTime.ToDateTime();
+            CurrentTime.Text = t.ToString("t", CultureInfo.CurrentCulture) + Environment.NewLine + t.ToString("d", CultureInfo.CurrentCulture);
         }
 
         private async void UpdateNetworkInfo()
         {
             this.DeviceName.Text = DeviceInfoPresenter.GetDeviceName();
             this.IPAddress1.Text = NetworkPresenter.GetCurrentIpv4Address();
-            this.NetworkName1.Text = NetworkPresenter.GetCurrentNetworkName() ?? "Not connected";
+            this.NetworkName1.Text = NetworkPresenter.GetCurrentNetworkName();
             this.NetworkInfo.ItemsSource = await NetworkPresenter.GetNetworkInformation();
         }
 
@@ -161,6 +173,19 @@ namespace IoTCoreDefaultApp
                     ShutdownHelper(ShutdownKind.Restart);
                     break;
             }
+        }
+
+        private void ShutdownDropdown_Opened(object sender, object e)
+        {
+            var w = ShutdownListView.ActualWidth;
+            if (w == 0)
+            {
+                // trick to recalculate the size of the dropdown
+                ShutdownDropdown.IsOpen = false;
+                ShutdownDropdown.IsOpen = true;
+            }
+            var offset = -(ShutdownListView.ActualWidth - ShutdownButton.ActualWidth);
+            ShutdownDropdown.HorizontalOffset = offset;
         }
     }
 }

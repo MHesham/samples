@@ -8,19 +8,19 @@
 
   <Identity
     Name="29c6e42c-6793-47d4-a2c1-01f8d711b7da"
-    Publisher="CN=msaleh"
+    Publisher="CN=MSFT"
     Version="1.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="29c6e42c-6793-47d4-a2c1-01f8d711b7da" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
     <DisplayName>WiFiConnect</DisplayName>
-    <PublisherDisplayName>msaleh</PublisherDisplayName>
+    <PublisherDisplayName>MSFT</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.10069.0" MaxVersionTested="10.0.10069.0" />
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.0.0" MaxVersionTested="10.0.0.0" />
   </Dependencies>
 
   <Resources>
@@ -33,12 +33,21 @@
       EntryPoint="WiFiConnect.App">
       <uap:VisualElements
         DisplayName="WiFiConnect"
-        Square150x150Logo="Assets\Logo.png"
-        Square44x44Logo="Assets\SmallLogo.png"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
         Description="WiFiConnect"
-        BackgroundColor="#464646">
+        BackgroundColor="transparent">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"/>
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
+      <Extensions>
+      <uap:Extension Category="windows.protocol">
+        <uap:Protocol Name="https" />
+      </uap:Extension>
+      <uap:Extension Category="windows.protocol">
+        <uap:Protocol Name="http" />
+      </uap:Extension>
+      </Extensions>
     </Application>
   </Applications>
 

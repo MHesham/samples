@@ -1,26 +1,5 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-    The MIT License(MIT)
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
 
 using System;
 using System.Collections.Generic;
@@ -38,7 +17,9 @@ using Windows.UI.Xaml.Controls.Primitives;
 using Windows.UI.Xaml.Data;
 using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Media;
+using Windows.UI.Xaml.Media.Imaging;
 using Windows.UI.Xaml.Navigation;
+using IoTCoreDefaultApp.Utils;
 
 namespace IoTCoreDefaultApp
 {
@@ -52,16 +33,32 @@ namespace IoTCoreDefaultApp
         public TutorialMainPage()
         {
             this.InitializeComponent();
-#if !RPI
-            TutorialList.Items.Remove(HelloBlinkyGridViewItem);
+
+#if !ALWAYS_SHOW_BLINKY
+            if (DeviceTypeInformation.Type != DeviceTypes.RPI2 && DeviceTypeInformation.Type != DeviceTypes.DB410)
+            {
+                TutorialList.Items.Remove(HelloBlinkyGridViewItem);
+            }
 #endif
+            this.NavigationCacheMode = NavigationCacheMode.Enabled;
 
-            UpdateDateTime();
+            this.DataContext = LanguageManager.GetInstance();
 
-            timer = new DispatcherTimer();
-            timer.Tick += timer_Tick;
-            timer.Interval = TimeSpan.FromSeconds(30);
-            timer.Start();
+            this.Loaded += (sender, e) =>
+            {
+                UpdateBoardInfo();
+                UpdateDateTime();
+
+                timer = new DispatcherTimer();
+                timer.Tick += timer_Tick;
+                timer.Interval = TimeSpan.FromSeconds(30);
+                timer.Start();
+            };
+            this.Unloaded += (sender, e) =>
+            {
+                timer.Stop();
+                timer = null;
+            };
         }
 
         private void timer_Tick(object sender, object e)
@@ -69,15 +66,39 @@ namespace IoTCoreDefaultApp
             UpdateDateTime();
         }
 
+        private void UpdateBoardInfo()
+        {
+            if (DeviceTypeInformation.Type == DeviceTypes.DB410)
+            {
+                TutorialsImage.Source = new BitmapImage(new Uri("ms-appx:///Assets/DB410-tutorials.png"));
+                GetStartedImage.Source = new BitmapImage(new Uri("ms-appx:///Assets/Tutorials/GetStarted-DB410.jpg"));
+                HelloBlinkyTileImage.Source = new BitmapImage(new Uri("ms-appx:///Assets/Tutorials/HelloBlinkyTile-DB410.jpg"));
+                GetConnectedImage.Source = new BitmapImage(new Uri("ms-appx:///Assets/Tutorials/GetConnected-DB410.jpg"));
+            }
+        }
+
         private void UpdateDateTime()
         {
             var t = DateTime.Now;
-            this.CurrentTime.Text = t.ToString("t", CultureInfo.CurrentCulture);
+            this.CurrentTime.Text = t.ToString("t", CultureInfo.CurrentCulture) + Environment.NewLine + t.ToString("d", CultureInfo.CurrentCulture);
         }
 
         private void ShutdownButton_Clicked(object sender, RoutedEventArgs e)
         {
             ShutdownDropdown.IsOpen = true;
+        }
+
+        private void ShutdownDropdown_Opened(object sender, object e)
+        {
+            var w = ShutdownListView.ActualWidth;
+            if (w == 0)
+            {
+                // trick to recalculate the size of the dropdown
+                ShutdownDropdown.IsOpen = false;
+                ShutdownDropdown.IsOpen = true;
+            }
+            var offset = -(ShutdownListView.ActualWidth - ShutdownButton.ActualWidth);
+            ShutdownDropdown.HorizontalOffset = offset;
         }
 
         private void ShutdownHelper(ShutdownKind kind)

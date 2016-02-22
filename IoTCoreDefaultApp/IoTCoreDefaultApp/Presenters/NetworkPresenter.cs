@@ -1,31 +1,13 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-    The MIT License(MIT)
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using Windows.ApplicationModel.Resources;
+using Windows.Devices.Enumeration;
 using Windows.Devices.WiFi;
 using Windows.Networking;
 using Windows.Networking.Connectivity;
@@ -36,7 +18,47 @@ namespace IoTCoreDefaultApp
     public class NetworkPresenter
     {
         private readonly static uint EthernetIanaType = 6;
-        private readonly static uint WifiIanaType = 71;
+        private readonly static uint WirelessInterfaceIanaType = 71;
+        private Dictionary<String, WiFiAdapter> WiFiAdapters = new Dictionary<string, WiFiAdapter>();
+        private DeviceWatcher WiFiAdaptersWatcher;
+        ManualResetEvent EnumAdaptersCompleted = new ManualResetEvent(false);
+        
+        public NetworkPresenter()
+        {
+            WiFiAdaptersWatcher = DeviceInformation.CreateWatcher(WiFiAdapter.GetDeviceSelector());
+            WiFiAdaptersWatcher.EnumerationCompleted += AdaptersEnumCompleted;
+            WiFiAdaptersWatcher.Added += AdaptersAdded;
+            WiFiAdaptersWatcher.Removed += AdaptersRemoved;
+            WiFiAdaptersWatcher.Start();
+        }
+
+        private void AdaptersRemoved(DeviceWatcher sender, DeviceInformationUpdate args)
+        {
+            WiFiAdapters.Remove(args.Id);
+        }
+
+        private void AdaptersAdded(DeviceWatcher sender, DeviceInformation args)
+        {
+            WiFiAdapters.Add(args.Id, null);
+        }
+
+        private async void AdaptersEnumCompleted(DeviceWatcher sender, object args)
+        {
+            List<String> WiFiAdaptersID = new List<string>(WiFiAdapters.Keys);
+            for(int i = 0; i < WiFiAdaptersID.Count; i++)
+            {
+                string id = WiFiAdaptersID[i];
+                try
+                {
+                    WiFiAdapters[id] = await WiFiAdapter.FromIdAsync(id);
+                }
+                catch (Exception)
+                {
+                    WiFiAdapters.Remove(id);
+                }
+            }
+            EnumAdaptersCompleted.Set();
+        }
 
         public static string GetDirectConnectionName()
         {
@@ -48,13 +70,21 @@ namespace IoTCoreDefaultApp
                     return icp.ProfileName;
                 }
             }
-            return ("None found");
+
+            return null;
         }
 
         public static string GetCurrentNetworkName()
         {
             var icp = NetworkInformation.GetInternetConnectionProfile();
-            return icp != null ? icp.ProfileName : null;
+            if (icp != null)
+            {
+                return icp.ProfileName;
+            }
+
+            var resourceLoader = ResourceLoader.GetForCurrentView();
+            var msg = resourceLoader.GetString("NoInternetConnection");
+            return msg;
         }
 
         public static string GetCurrentIpv4Address()
@@ -79,14 +109,46 @@ namespace IoTCoreDefaultApp
                 }
             }
 
-            return "<no Internet connection>";
+            var resourceLoader = ResourceLoader.GetForCurrentView();
+            var msg = resourceLoader.GetString("NoInternetConnection");
+            return msg;
         }
 
         private Dictionary<WiFiAvailableNetwork, WiFiAdapter> networkNameToInfo;
 
         private static WiFiAccessStatus? accessStatus;
 
-        public static async Task<bool> WifiIsAvailable()
+        // Call this method before accessing WiFiAdapters Dictionary
+        private async Task UpdateAdapters()
+        {
+            bool fInit = false;
+            foreach (var adapter in WiFiAdapters)
+            {
+                if (adapter.Value == null)
+                {
+                    // New Adapter plugged-in which requires Initialization
+                    fInit = true;
+                }
+            }
+
+            if (fInit)
+            {
+                List<String> WiFiAdaptersID = new List<string>(WiFiAdapters.Keys);
+                for (int i = 0; i < WiFiAdaptersID.Count; i++)
+                {
+                    string id = WiFiAdaptersID[i];
+                    try
+                    {
+                        WiFiAdapters[id] = await WiFiAdapter.FromIdAsync(id);
+                    }
+                    catch (Exception)
+                    {
+                        WiFiAdapters.Remove(id);
+                    }
+                }
+            }
+        }
+        public async Task<bool> WifiIsAvailable()
         {
             if ((await TestAccess()) == false)
             {
@@ -95,8 +157,9 @@ namespace IoTCoreDefaultApp
 
             try
             {
-                var adapters = await WiFiAdapter.FindAllAdaptersAsync();
-                return adapters.Count > 0;
+                EnumAdaptersCompleted.WaitOne();
+                await UpdateAdapters();
+                return (WiFiAdapters.Count > 0);
             }
             catch (Exception)
             {
@@ -112,11 +175,14 @@ namespace IoTCoreDefaultApp
             }
 
             networkNameToInfo = new Dictionary<WiFiAvailableNetwork, WiFiAdapter>();
-
-            var adapters = WiFiAdapter.FindAllAdaptersAsync();
-
-            foreach (var adapter in await adapters)
+            List<WiFiAdapter> WiFiAdaptersList = new List<WiFiAdapter>(WiFiAdapters.Values);
+            foreach (var adapter in WiFiAdaptersList)
             {
+                if (adapter == null)
+                {
+                    return false;
+                }
+
                 await adapter.ScanAsync();
 
                 if (adapter.NetworkReport == null)
@@ -126,7 +192,7 @@ namespace IoTCoreDefaultApp
 
                 foreach (var network in adapter.NetworkReport.AvailableNetworks)
                 {
-                    if (!string.IsNullOrEmpty(network.Ssid))
+                    if (!HasSsid(networkNameToInfo, network.Ssid))
                     {
                         networkNameToInfo[network] = adapter;
                     }
@@ -134,6 +200,18 @@ namespace IoTCoreDefaultApp
             }
 
             return true;
+        }
+
+        private bool HasSsid(Dictionary<WiFiAvailableNetwork, WiFiAdapter> resultCollection, string ssid)
+        {
+            foreach (var network in resultCollection)
+            {
+                if (!string.IsNullOrEmpty(network.Key.Ssid) && network.Key.Ssid == ssid)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         public async Task<IList<WiFiAvailableNetwork>> GetAvailableNetworks()
@@ -154,7 +232,7 @@ namespace IoTCoreDefaultApp
 
             var validProfiles = connectionProfiles.Where(profile =>
             {
-                return (profile.NetworkAdapter != null && profile.NetworkAdapter.IanaInterfaceType == WifiIanaType);
+                return (profile.IsWlanConnectionProfile && profile.GetNetworkConnectivityLevel() != NetworkConnectivityLevel.None);
             });
 
             if (validProfiles.Count() < 1)
@@ -164,7 +242,7 @@ namespace IoTCoreDefaultApp
 
             var firstProfile = validProfiles.First() as ConnectionProfile;
 
-            return networkNameToInfo.Keys.First(wifiNetwork => wifiNetwork.Ssid.Equals(firstProfile.ProfileName));
+            return networkNameToInfo.Keys.FirstOrDefault(wifiNetwork => wifiNetwork.Ssid.Equals(firstProfile.ProfileName));
         }
 
         public async Task<bool> ConnectToNetwork(WiFiAvailableNetwork network, bool autoConnect)
@@ -225,8 +303,9 @@ namespace IoTCoreDefaultApp
 
         public static async Task<IList<NetworkInfo>> GetNetworkInformation()
         {
-            var networkList = new Dictionary<string, NetworkInfo>();
+            var networkList = new Dictionary<Guid, NetworkInfo>();
             var hostNamesList = NetworkInformation.GetHostNames();
+            var resourceLoader = ResourceLoader.GetForCurrentView();
 
             foreach (var hostName in hostNamesList)
             {
@@ -237,12 +316,22 @@ namespace IoTCoreDefaultApp
                     if (profile != null)
                     {
                         NetworkInfo info;
-                        var found = networkList.TryGetValue(profile.ProfileName, out info);
+                        var found = networkList.TryGetValue(hostName.IPInformation.NetworkAdapter.NetworkAdapterId, out info);
                         if (!found)
                         {
                             info = new NetworkInfo();
-                            info.NetworkName = profile.ProfileName;
-                            info.NetworkStatus = profile.GetNetworkConnectivityLevel().ToString();
+                            networkList[hostName.IPInformation.NetworkAdapter.NetworkAdapterId] = info;
+                            if (hostName.IPInformation.NetworkAdapter.IanaInterfaceType == WirelessInterfaceIanaType &&
+                                profile.ProfileName.Equals("Ethernet"))
+                            {
+                                info.NetworkName = "Wireless LAN Adapter";
+                            }
+                            else
+                            {
+                                info.NetworkName = profile.ProfileName;
+                            }
+                            var statusTag = profile.GetNetworkConnectivityLevel().ToString();
+                            info.NetworkStatus = resourceLoader.GetString("NetworkConnectivityLevel_" + statusTag);
                         }
                         if (hostName.Type == HostNameType.Ipv4)
                         {
@@ -251,10 +340,6 @@ namespace IoTCoreDefaultApp
                         else
                         {
                             info.NetworkIpv6 = hostName.CanonicalName;
-                        }
-                        if (!found)
-                        {
-                            networkList[profile.ProfileName] = info;
                         }
                     }
                 }

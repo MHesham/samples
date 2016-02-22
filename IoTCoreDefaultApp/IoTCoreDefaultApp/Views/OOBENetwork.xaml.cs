@@ -1,26 +1,5 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-    The MIT License(MIT)
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
 
 using System;
 using Windows.Devices.WiFi;
@@ -30,6 +9,7 @@ using Windows.UI.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Input;
+using Windows.Networking.Connectivity;
 
 // The Blank Page item template is documented at http://go.microsoft.com/fwlink/?LinkId=234238
 
@@ -40,22 +20,47 @@ namespace IoTCoreDefaultApp
     /// </summary>
     public sealed partial class OOBENetwork : Page
     {
-        private NetworkPresenter networkPresenter;
+        private NetworkPresenter networkPresenter = new NetworkPresenter();
+        private CoreDispatcher OOBENetworkPageDispatcher;
         private bool Automatic = true;
         private string CurrentPassword = string.Empty;
 
         public OOBENetwork()
         {
             this.InitializeComponent();
+            OOBENetworkPageDispatcher = Window.Current.Dispatcher;
+
+            NetworkInformation.NetworkStatusChanged += NetworkInformation_NetworkStatusChanged;
+
+            this.NavigationCacheMode = Windows.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
+
+            this.DataContext = LanguageManager.GetInstance();
+
+            this.Loaded += (sender, e) =>
+            {
+                SetupNetwork();
+            };
+        }
+
+        private void SetupNetwork()
+        {
             SetupEthernet();
             SetupWifi();
+        }
+
+        private async void NetworkInformation_NetworkStatusChanged(object sender)
+        {
+            await OOBENetworkPageDispatcher.RunAsync(CoreDispatcherPriority.Low, () =>
+            {
+                SetupNetwork();
+            });
         }
 
         private void SetupEthernet()
         {
             var ethernetProfile = NetworkPresenter.GetDirectConnectionName();
 
-            if (ethernetProfile.Equals("None found"))
+            if (ethernetProfile == null)
             {
                 NoneFoundText.Visibility = Visibility.Visible;
                 DirectConnectionStackPanel.Visibility = Visibility.Collapsed;
@@ -69,9 +74,7 @@ namespace IoTCoreDefaultApp
 
         private async void SetupWifi()
         {
-            networkPresenter = new NetworkPresenter();
-
-            if (await NetworkPresenter.WifiIsAvailable())
+            if (await networkPresenter.WifiIsAvailable())
             {
                 var networks = await networkPresenter.GetAvailableNetworks();
 
@@ -95,15 +98,13 @@ namespace IoTCoreDefaultApp
 
             foreach(var item in e.RemovedItems)
             {
-                var listViewItem = listView.ContainerFromItem(item) as ListViewItem;
-                listViewItem.ContentTemplate = WifiInitialState;
+                SwitchToItemState(item, WifiInitialState, true);
             }
 
             foreach(var item in e.AddedItems)
             {
                 Automatic = true;
-                var listViewItem = listView.ContainerFromItem(item) as ListViewItem;
-                listViewItem.ContentTemplate = WifiConnectState;
+                SwitchToItemState(item, WifiConnectState, true);
             }
         }
 
@@ -117,7 +118,7 @@ namespace IoTCoreDefaultApp
             }
             else
             {
-                SwitchToItemState(network, WifiPasswordState);
+                SwitchToItemState(network, WifiPasswordState, false);
             }
         }
 
@@ -129,7 +130,7 @@ namespace IoTCoreDefaultApp
 
             await dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
             {
-                SwitchToItemState(network, WifiConnectingState);
+                SwitchToItemState(network, WifiConnectingState, false);
             });
 
             if (await didConnect)
@@ -143,7 +144,7 @@ namespace IoTCoreDefaultApp
             {
                 await dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
                 {
-                    var item = SwitchToItemState(network, WifiInitialState);
+                    var item = SwitchToItemState(network, WifiInitialState, false);
                     item.IsSelected = false;
                 });
             }
@@ -173,15 +174,21 @@ namespace IoTCoreDefaultApp
         private void CancelButton_Clicked(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
-            var item = SwitchToItemState(button.DataContext, WifiInitialState);
+            var item = SwitchToItemState(button.DataContext, WifiInitialState, false);
             item.IsSelected = false;
         }
 
-        private ListViewItem SwitchToItemState(object dataContext, DataTemplate template)
+        private ListViewItem SwitchToItemState(object dataContext, DataTemplate template, bool forceUpdate)
         {
+            if (forceUpdate)
+            {
+                WifiListView.UpdateLayout();
+            }
             var item = WifiListView.ContainerFromItem(dataContext) as ListViewItem;
-            item.ContentTemplate = template;
-
+            if (item != null)
+            {
+                item.ContentTemplate = template;
+            }
             return item;
         }
 

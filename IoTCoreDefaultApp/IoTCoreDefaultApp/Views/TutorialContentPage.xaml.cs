@@ -1,26 +1,4 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
-
-    The MIT License(MIT)
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -39,6 +17,9 @@ using Windows.UI.Xaml.Data;
 using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Media;
 using Windows.UI.Xaml.Navigation;
+using Windows.UI.Xaml.Documents;
+using Windows.UI.Xaml.Media.Imaging;
+using IoTCoreDefaultApp.Utils;
 
 namespace IoTCoreDefaultApp
 {
@@ -54,27 +35,147 @@ namespace IoTCoreDefaultApp
             var rootFrame = Window.Current.Content as Frame;
             rootFrame.Navigated += RootFrame_Navigated;
 
-            UpdateDateTime();
+            this.NavigationCacheMode = NavigationCacheMode.Enabled;
 
-            timer = new DispatcherTimer();
-            timer.Tick += timer_Tick;
-            timer.Interval = TimeSpan.FromSeconds(30);
-            timer.Start();
+            var languageManager = LanguageManager.GetInstance();
+            this.DataContext = languageManager;
+
+            languageManager.PropertyChanged += (sender, e) =>
+            {
+                // If the language manager updates the 
+                // language, the current content needs to
+                // be reloaded.
+                if (e.PropertyName == "Item[]")
+                {
+                    Dispatcher.RunAsync(CoreDispatcherPriority.Low, () => { LoadDocument(docName); });
+                }
+            };
+
+            this.Loaded += (sender, e) =>
+            {
+                UpdateDateTime();
+
+                timer = new DispatcherTimer();
+                timer.Tick += timer_Tick;
+                timer.Interval = TimeSpan.FromSeconds(30);
+                timer.Start();
+            };
+            this.Unloaded += (sender, e) =>
+            {
+                timer.Stop();
+                timer = null;
+            };
         }
 
-        private void RootFrame_Navigated(object sender, NavigationEventArgs e)
+        private async void RootFrame_Navigated(object sender, NavigationEventArgs e)
         {
-            docName = e.Parameter as string;
-            if (docName != null)
+            var newDocName = e.Parameter as string;
+            if (docName != newDocName && newDocName != null)
             {
-                LoadDocument(docName);
+                docName = newDocName;
+                Dispatcher.RunAsync(CoreDispatcherPriority.Low, () =>{ LoadDocument(docName); });
                 NextButton.Visibility = (NavigationUtils.IsNextTutorialButtonVisible(docName) ? Visibility.Visible : Visibility.Collapsed);
             }
         }
 
         private void LoadDocument(string docname)
         {
-            TutorialText.Source = new Uri(string.Format(CultureInfo.InvariantCulture, "ms-appx-web:///assets/tutorials/{0}.htm", docname));
+            var resourceMap = Windows.ApplicationModel.Resources.Core.ResourceManager.Current.MainResourceMap;
+            var resourceContext = Windows.ApplicationModel.Resources.Core.ResourceContext.GetForCurrentView();
+            var keys = resourceMap.Keys.Where(s => { return s.StartsWith("Resources/Tutorial/" + docname + "/"); }).OrderBy(s => s).ToArray();
+
+            TutorialRichText.Blocks.Clear();
+            foreach (var key in keys)
+            {
+                var split = key.Split('/');
+                if (split.Length == 0)
+                {
+                    continue;
+                }
+                var blockType = split.Last();
+                var value = resourceMap[key].Resolve(resourceContext).ValueAsString;
+                var par = new Paragraph();
+                switch (blockType)
+                {
+                    case "title":
+                        par.FontSize = 28;
+                        par.Margin = new Thickness(top: 0, left: 0, right: 0, bottom: 5);
+                        par.Inlines.Add(new Run { Text = value });
+                        break;
+                    case "subtitle":
+                        par.FontSize = 11;
+                        par.Margin = new Thickness(top: 0, left: 0, right: 0, bottom: 5);
+                        par.Inlines.Add(new Run { Text = value });
+                        break;
+                    case "h1":
+                        par.FontSize = 16;
+                        par.Margin = new Thickness(top: 10, left: 0, right: 0, bottom: 10);
+                        par.Inlines.Add(new Run { Text = value });
+                        break;
+                    case "p":
+                        par.FontSize = 11;
+                        par.Margin = new Thickness(top: 0, left: 0, right: 0, bottom: 4);
+                        par.Inlines.Add(new Run { Text = value });
+                        break;
+                    case "ul":
+                        par.FontSize = 11;
+                        par.Margin = new Thickness(top: 0, left: 0, right: 0, bottom: 4);
+                        value = "\u27a4 " + value;
+                        par.Inlines.Add(new Run { Text = value });
+                        break;
+                    case "br":
+                        try
+                        {
+                            double fontSize = 11;
+                            double bottomMarging = 4;
+                            var size = split[split.Length - 2];
+                            if (size.Contains('x'))
+                            {
+                                var sizeSplit = size.Split('x');
+                                fontSize = int.Parse(sizeSplit[0]);
+                                bottomMarging = int.Parse(sizeSplit[1]);
+                            }
+                            par.FontSize = fontSize;
+                            par.Margin = new Thickness(top: 0, left: 0, right: 0, bottom: bottomMarging);
+                            par.Inlines.Add(new Run { Text = value });
+                        }
+                        catch (Exception)
+                        {
+                            // just ignore this entry if anything goes wrong...
+                        }
+                        break;
+                    case "image":
+                        try
+                        {
+                            var deviceType = DeviceTypeInformation.Type;
+                            if (deviceType != DeviceTypes.DB410)
+                            {
+                                deviceType = DeviceTypes.RPI2; // default to RPI2 images
+                            }
+
+                            var imageSource = new BitmapImage(new Uri("ms-appx:///" + String.Format(value, deviceType)));
+                            var size = split[split.Length - 2];
+                            if (size.Contains('x'))
+                            {
+                                var sizeSplit = size.Split('x');
+                                var dx = int.Parse(sizeSplit[0]);
+                                var dy = int.Parse(sizeSplit[1]);
+                                par.Inlines.Add(new InlineUIContainer { Child = new Image { Source = imageSource, Width = dx, Height = dy } });
+                            }
+                            else
+                            {
+                                par.Inlines.Add(new InlineUIContainer { Child = new Image { Source = imageSource } });
+                            }
+                            par.Margin = new Thickness(top: 6, left: 0, right: 0, bottom: 10);
+                        }
+                        catch (Exception)
+                        {
+                            // just ignore this entry if anything goes wrong...
+                        }
+                        break;
+                }
+                TutorialRichText.Blocks.Add(par);
+            }
         }
 
         private void timer_Tick(object sender, object e)
@@ -85,13 +186,27 @@ namespace IoTCoreDefaultApp
         private void UpdateDateTime()
         {
             var t = DateTime.Now;
-            this.CurrentTime.Text = t.ToString("t", CultureInfo.CurrentCulture);
+            this.CurrentTime.Text = t.ToString("t", CultureInfo.CurrentCulture) + Environment.NewLine + t.ToString("d", CultureInfo.CurrentCulture);
         }
 
         private void ShutdownButton_Clicked(object sender, RoutedEventArgs e)
         {
             ShutdownDropdown.IsOpen = true;
         }
+
+        private void ShutdownDropdown_Opened(object sender, object e)
+        {
+            var w = ShutdownListView.ActualWidth;
+            if (w == 0)
+            {
+                // trick to recalculate the size of the dropdown
+                ShutdownDropdown.IsOpen = false;
+                ShutdownDropdown.IsOpen = true;
+            }
+            var offset = -(ShutdownListView.ActualWidth - ShutdownButton.ActualWidth);
+            ShutdownDropdown.HorizontalOffset = offset;
+        }
+
 
         private void ShutdownHelper(ShutdownKind kind)
         {
